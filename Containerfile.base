@@ -21,7 +21,9 @@ WORKDIR /rag-content
 ENV EMBEDDING_MODEL=sentence-transformers/all-mpnet-base-v2
 
 COPY . /rag-content
-RUN make install-global
+RUN make install-tools && \
+    pdm export --global --project . --group ${FLAVOR} --lockfile pdm.lock.${FLAVOR} -o requirements.txt && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Test torch
 RUN if [[ $(echo $LD_LIBRARY_PATH) == *"/usr/local/cuda-12.6/compat"* ]]; then \

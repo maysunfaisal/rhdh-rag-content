@@ -67,11 +67,13 @@ build-image-ocp-example-test: build-image-ocp-example ## Build test image for th
 run-ocp-example-test: build-image-ocp-example-test ## Execute test image for the OCP example
 	podman run test-rag-content
 
-build-image-rhdh-example: ## Build a rag-content container image for RHDH
-	podman build --platform linux/amd64 -t rhdh-rag-content -f examples/Containerfile.rhdh_lightspeed --build-arg FLAVOR=$(TORCH_GROUP) .
+build-image-rhdh-example: build-base-image ## Build a rag-content container image for RHDH
+	@BASE_IMAGE_ID=$$(podman images --filter "reference=cpu-road-core-base" --format "{{.ID}}"); \
+	echo "--- Using base image ID: $$BASE_IMAGE_ID ---"; \
+	podman build --platform linux/amd64 -t rhdh-rag-content -f examples/Containerfile.rhdh_lightspeed --build-arg BASE_IMAGE_FROM=$$BASE_IMAGE_ID --build-arg FLAVOR=$(TORCH_GROUP) .
 
 build-base-image: ## Build base container image
-	podman build -t $(TORCH_GROUP)-road-core-base -f Containerfile.base --build-arg FLAVOR=$(TORCH_GROUP)
+	podman build --platform linux/amd64 -t $(TORCH_GROUP)-road-core-base -f Containerfile.base --build-arg FLAVOR=$(TORCH_GROUP)
 
 start-postgres: ## Start postgresql from the pgvector container image
 	mkdir -pv ./postgresql/data ./output

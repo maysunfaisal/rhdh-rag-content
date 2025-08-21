@@ -1,38 +1,50 @@
 ARG FLAVOR=cpu
-FROM quay.io/redhat-ai-dev/${FLAVOR}-road-core-base:latest as road-core-rag-builder
-ARG RHDH_DOCS_VERSION="1.6"
+ARG BASE_IMAGE_FROM
+FROM ${BASE_IMAGE_FROM} as road-core-rag-builder
+
+ARG RHDH_DOCS_VERSIONS="1.6"
+ARG OCP_DOCS_VERSION="4.19"
 ARG NUM_WORKERS=1
 
 USER 0
 WORKDIR /rag-content
 
 COPY ./examples/get_rhdh_plaintext_docs.sh ./
+COPY ./examples/get_ocp_plaintext_docs.sh ./
 COPY ./examples/asciidoctor_text ./asciidoctor_text
-# Modify script inplace to account for new path
-RUN sed -i 's/examples\/asciidoctor_text/asciidoctor_text/' get_rhdh_plaintext_docs.sh
-RUN ./get_rhdh_plaintext_docs.sh $RHDH_DOCS_VERSION
 
-RUN set -e && for RHDH_VERSION in $(ls -1 rhdh-product-docs-plaintext); do \
-        python ./examples/generate_embeddings_rhdh.py \
-            -f rhdh-product-docs-plaintext/${RHDH_VERSION} \
-            -md embeddings_model \
-            -mn ${EMBEDDING_MODEL} \
-            -o vector_db/rhdh_product_docs/${RHDH_VERSION} \
-            -w ${NUM_WORKERS} \
-            -i rhdh-product-docs-$(echo $RHDH_VERSION | sed 's/\./_/g') \
-            -t rhdh-docs-topic-map/rhdh_topic_map.yaml \
-            -v ${RHDH_VERSION}; \
-    done
+# Adjust path in script
+RUN sed -i 's/examples\/asciidoctor_text/asciidoctor_text/' get_rhdh_plaintext_docs.sh
+
+# Tell Python where to find the 'lightspeed_rag_content' module
+ENV PYTHONPATH="/rag-content/src"
+
+# Fetch all RHDH versions' docs + topic maps
+RUN ./get_rhdh_plaintext_docs.sh ${RHDH_DOCS_VERSIONS}
+
+# Fetch OCP docs + topic maps
+RUN ./get_ocp_plaintext_docs.sh ${OCP_DOCS_VERSION}
+
+# Generate a single set of embeddings for all RHDH versions
+RUN python ./examples/generate_embeddings_rhdh.py \
+        -f_rhdh rhdh-product-docs-plaintext \
+        -f_ocp ocp-product-docs-plaintext/${OCP_VERSION} \
+        -md embeddings_model \
+        -mn ${EMBEDDING_MODEL} \
+        -o vector_db/product_docs \
+        -w ${NUM_WORKERS} \
+        -i product-docs \
+        -t rhdh-docs-topic-map \
+        -v_ocp ${OCP_DOCS_VERSION}
 
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
-COPY --from=road-core-rag-builder /rag-content/vector_db/rhdh_product_docs /rag/vector_db/rhdh_product_docs
+
+COPY --from=road-core-rag-builder /rag-content/vector_db/product_docs /rag/vector_db/product_docs
 COPY --from=road-core-rag-builder /rag-content/embeddings_model /rag/embeddings_model
 
-# this directory is checked by ecosystem-cert-preflight-checks task in Konflux
 RUN mkdir /licenses
 COPY LICENSE /licenses/
 
-# Labels for enterprise contract
 LABEL com.redhat.component=rhdh-lightspeed-rag-content
 LABEL description="Red Hat Developer Hub Lightspeed RAG content"
 LABEL distribution-scope=private

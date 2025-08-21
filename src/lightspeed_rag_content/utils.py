@@ -20,7 +20,10 @@ def get_common_arg_parser() -> argparse.ArgumentParser:
     """Provide common CLI arguments to document processing scripts."""
     parser = argparse.ArgumentParser(description="Embedding CLI for task execution")
     parser.add_argument(
-        "-f", "--folder", help="Directory containing the plain text documentation"
+        "-f_rhdh", "--folder-rhdh", help="Directory containing the plain text documentation"
+    )
+    parser.add_argument(
+        "-f_ocp", "--folder-ocp", help="Directory containing the plain text documentation"
     )
     parser.add_argument(
         "-md",

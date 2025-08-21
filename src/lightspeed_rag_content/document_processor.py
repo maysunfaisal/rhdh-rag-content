@@ -8,10 +8,11 @@
 #         http://www.apache.org/licenses/LICENSE-2.0
 #
 #    Unless required by applicable law or agreed to in writing, software
-#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
-#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
-#    License for the specific language governing permissions and limitations
-#    under the License.
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+
 """Document processing for vector database."""
 
 import json
@@ -58,18 +59,12 @@ class DocumentProcessor:
         self.chunk_overlap = chunk_overlap
         self.model_name = model_name
         self.embeddings_model_dir = embeddings_model_dir
-        self.num_workers = num_workers
+        self.num_workers = num_workers if num_workers > 0 else None
         self.vector_store_type = vector_store_type
         self.table_name = table_name
 
-        if self.num_workers <= 0:
-            self.num_workers = None
-
-        # List of good nodes
         self._good_nodes = []
-        # Total number of embedded files
         self._num_embedded_files = 0
-        # Start of time, used to calculate the execution time
         self._start_time = time.time()
 
         os.environ["HF_HOME"] = self.embeddings_model_dir
@@ -78,10 +73,7 @@ class DocumentProcessor:
         self._settings = self._get_settings()
 
     def _get_settings(self) -> DocumentSettings:
-        """Return DocumentSettings tuple.
-
-        DocumenSettings consists of llama-index Settings, embedding dimension and StorageContext.
-        """
+        """Return DocumentSettings tuple."""
         Settings.chunk_size = self.chunk_size
         Settings.chunk_overlap = self.chunk_overlap
         Settings.embed_model = HuggingFaceEmbedding(
@@ -92,26 +84,19 @@ class DocumentProcessor:
         embedding_dimension = len(
             Settings.embed_model.get_text_embedding("random text")
         )
+
         if self.vector_store_type == "faiss":
             faiss_index = faiss.IndexFlatIP(embedding_dimension)
             vector_store = FaissVectorStore(faiss_index=faiss_index)
         elif self.vector_store_type == "postgres":
-            user = os.getenv("POSTGRES_USER")
-            password = os.getenv("POSTGRES_PASSWORD")
-            host = os.getenv("POSTGRES_HOST")
-            port = os.getenv("POSTGRES_PORT")
-            database = os.getenv("POSTGRES_DATABASE")
-
-            table_name = self.table_name
-
             vector_store = PGVectorStore.from_params(
-                database=database,
-                host=host,
-                password=password,
-                port=port,
-                user=user,
-                table_name=table_name,
-                embed_dim=embedding_dimension,  # openai embedding dimension
+                database=os.getenv("POSTGRES_DATABASE"),
+                host=os.getenv("POSTGRES_HOST"),
+                password=os.getenv("POSTGRES_PASSWORD"),
+                port=os.getenv("POSTGRES_PORT"),
+                user=os.getenv("POSTGRES_USER"),
+                table_name=self.table_name,
+                embed_dim=embedding_dimension,
             )
         else:
             raise RuntimeError(f"Unknown vector store type: {self.vector_store_type}")
@@ -122,17 +107,13 @@ class DocumentProcessor:
 
     def _got_whitespace(self, text: str) -> bool:
         """Indicate if the parameter string contains whitespace."""
-        for c in text:
-            if c.isspace():
-                return True
-        return False
+        return any(c.isspace() for c in text)
 
     def _filter_out_invalid_nodes(self, nodes: List) -> List:
         """Filter out invalid nodes."""
         good_nodes = []
         for node in nodes:
             if isinstance(node, TextNode) and self._got_whitespace(node.text):
-                # Exclude given metadata during embedding
                 good_nodes.append(node)
             else:
                 LOG.debug("Skipping node without whitespace: %s", repr(node))
@@ -154,14 +135,16 @@ class DocumentProcessor:
         metadata["llm"] = "None"
         metadata["embedding-model"] = self.model_name
         metadata["index-id"] = index
-        if self.vector_store_type == "faiss":
-            metadata["vector-db"] = "faiss.IndexFlatIP"
-        elif self.vector_store_type == "postgres":
-            metadata["vector-db"] = "PGVectorStore"
+        metadata["vector-db"] = (
+            "faiss.IndexFlatIP"
+            if self.vector_store_type == "faiss"
+            else "PGVectorStore"
+        )
         metadata["embedding-dimension"] = self._settings.embedding_dimension
         metadata["chunk"] = self.chunk_size
         metadata["overlap"] = self.chunk_overlap
         metadata["total-embedded-files"] = self._num_embedded_files
+
         with open(os.path.join(persist_folder, "metadata.json"), "w") as file:
             file.write(json.dumps(metadata))
 
@@ -169,6 +152,7 @@ class DocumentProcessor:
         self,
         docs_dir: Path,
         metadata: MetadataProcessor,
+        version: str,
         required_exts: List[str] | None = None,
         file_extractor: Dict | None = None,
     ) -> None:
@@ -181,12 +165,18 @@ class DocumentProcessor:
             file_extractor=file_extractor,
         )
 
-        # Create chunks/nodes
         docs = reader.load_data(num_workers=self.num_workers)
         nodes = self._settings.settings.text_splitter.get_nodes_from_documents(docs)
-        self._good_nodes.extend(self._filter_out_invalid_nodes(nodes))
 
-        # Count embedded files and unreachables nodes
+        # Inject RHDH or OCP version metadata into each node
+        for node in nodes:
+            if isinstance(node, TextNode) and "rhdh" in str(docs_dir):
+                node.metadata["rhdh_version"] = version
+            elif isinstance(node, TextNode) and "ocp" in str(docs_dir):
+                node.metadata["ocp_version"] = version
+
+        filtered = self._filter_out_invalid_nodes(nodes)
+        self._good_nodes.extend(filtered)
         self._num_embedded_files += len(docs)
 
     def save(self, index: str, output_dir: str) -> None:

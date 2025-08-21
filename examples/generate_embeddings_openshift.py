@@ -15,7 +15,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
-OCP_DOCS_ROOT_URL = "https://docs.openshift.com/container-platform/"
+OCP_DOCS_ROOT_URL = "https://docs.redhat.com/en/documentation/openshift_container_platform/"
 OCP_DOCS_VERSION = "4.15"
 RUNBOOKS_ROOT_URL = "https://github.com/openshift/runbooks/blob/master"
 
@@ -33,8 +33,9 @@ class OpenshiftDocsMetadata(MetadataProcessor):
         return (
             OCP_DOCS_ROOT_URL
             + self.ocp_docs_version
+            + "/html-single/"
             + file_path.removeprefix(self.root_dir).removesuffix("txt")
-            + "html"
+            + "/index"
         )
 
 
